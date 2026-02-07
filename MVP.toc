@@ -1,0 +1,15 @@
+## Interface: 20505
+## Title: MVP |cffffffffDungeon Vouches|r
+## Notes: End-of-dungeon vouch + reputation database shared via the MVPdata channel (TBC Anniversary 2.5.5).
+## Author: Tehshortbus
+## Version: 0.2.5
+## SavedVariables: MVPDB, MVPConfig
+
+MVP.lua
+Util.lua
+Data.lua
+Sync.lua
+UI_Vouch.lua
+UI_DB.lua
+Tooltip.lua
+LFG_Scanner.lua
