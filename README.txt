@@ -1,6 +1,9 @@
+------------------------------------------------------------------------
 MVP End-of-dungeon vouch + reputation database (TBC Anniversary 2.5.5)
 Version: 0.2.8
 ------------------------------------------------------------------------
+After you download, make sure to rename the addon's folder to "MVP" 
+AKA REMOVE THE VERSION NUMBER FROM THE FOLDER
 
 /mvp db
 /mvp start
