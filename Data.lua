@@ -27,7 +27,7 @@ end
 
 Data.NEG_REASONS = {
   ["LOW_PARTICIPATION"] = "Low Participation/Situational Awareness",
-  ["MULTIPLE_AFKS"] = "Multiple AFK's",
+  ["UNSKILLED_PLAYER"] = "Unskilled Player",
   ["LEAVER_AFK_DC"] = "Leaver / DC",
   ["TOXIC_COMMUNICATION"] = "Toxic Communication",
   ["GRIEFING_PULLS"] = "Griefing",
@@ -45,6 +45,24 @@ Data.POS_REASONS = {
 Data.ROLES = { "TANK", "HEALER", "DPS" }
 Data.ROLE_LABELS = { TANK="Tank", HEALER="Healer", DPS="DPS" }
 
+-- Helper function to get a readable label for a reason code
+function Data:GetReasonLabel(reasonCode, isNegative)
+  if not reasonCode then return "Unknown" end
+  
+  local reasonTable = isNegative and Data.NEG_REASONS or Data.POS_REASONS
+  local label = reasonTable[reasonCode]
+  
+  -- If we have a label, use it
+  if label then return label end
+  
+  -- Otherwise, format the code nicely (convert SNAKE_CASE to Title Case)
+  local formatted = reasonCode:gsub("_", " "):gsub("(%a)([%w_']*)", function(first, rest)
+    return first:upper() .. rest:lower()
+  end)
+  
+  return formatted
+end
+
 local function ensureTables()
   MVPDB = MVPDB or {}
   MVPDB.vouches = MVPDB.vouches or {}         -- [vouchId] = record
@@ -55,6 +73,7 @@ end
 function Data:Init()
   ensureTables()
   self:_migrateVouches()
+  self:_migrateReasonCodes()
   self:_cleanupOldVouches()
 end
 
@@ -103,6 +122,40 @@ function Data:_migrateVouches()
 
   if migrated > 0 then
     MVP.Util.DebugPrint(string.format("Migrated %d legacy vouches to trusted status", migrated))
+    self:_rebuildAgg()
+  end
+end
+
+-- Migration: fix old reason codes to match current reason keys
+function Data:_migrateReasonCodes()
+  if not MVPDB or not MVPDB.vouches then return end
+
+  -- Mapping of old reason codes to new ones
+  local reasonMigrations = {
+    -- Old negative reasons that need updating
+    ["AFK_LOW_PARTICIPATION"] = "LOW_PARTICIPATION",
+    ["WOW_PAWTICIPATION"] = "LOW_PARTICIPATION",  -- Typo from old version
+    ["MULTIPLE_AFKS"] = "UNSKILLED_PLAYER",
+    ["GWIEFING_PUWWS"] = "GRIEFING_PULLS",  -- Typo from old version
+    
+    -- Old positive reasons that need updating
+    ["HIGH_PARTICIPATION"] = "SKILLED_PLAYER",
+    ["WEWIABWE"] = "RELIABLE",  -- Typo from old version
+  }
+
+  local migrated = 0
+  for id, rec in pairs(MVPDB.vouches) do
+    if rec and rec.reason then
+      local newReason = reasonMigrations[rec.reason]
+      if newReason then
+        rec.reason = newReason
+        migrated = migrated + 1
+      end
+    end
+  end
+
+  if migrated > 0 then
+    MVP.Util.DebugPrint(string.format("Migrated %d vouch reason codes to current version", migrated))
     self:_rebuildAgg()
   end
 end
