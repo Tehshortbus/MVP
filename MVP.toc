@@ -1,7 +1,7 @@
 ## Interface: 20505
 ## Title: MVP |cffffffffDungeon Vouches|r
 ## Notes: End-of-dungeon vouch + reputation database shared via the MVPdata channel (TBC Anniversary 2.5.5).
-## Author: ChatGPT (generated)
+## Author: Tehshortbus
 ## Version: 0.2.8
 ## SavedVariables: MVPDB, MVPConfig
 
