@@ -75,6 +75,28 @@ function Data:Init()
   self:_migrateVouches()
   self:_migrateReasonCodes()
   self:_cleanupOldVouches()
+  self:_cleanupUnknownVouches()
+end
+
+-- Cleanup: Remove any vouches recorded for "Unknown" players (caused by too-fast roster lookup)
+function Data:_cleanupUnknownVouches()
+  if not MVPDB or not MVPDB.vouches then return end
+  local deleted = 0
+  for id, rec in pairs(MVPDB.vouches) do
+    if rec then
+      local targetIsUnknown = (rec.target == "Unknown" or rec.target == "" or rec.target == nil)
+      local raterIsUnknown  = (rec.rater  == "Unknown" or rec.rater  == "" or rec.rater  == nil)
+      if targetIsUnknown or raterIsUnknown then
+        MVPDB.vouches[id] = nil
+        deleted = deleted + 1
+      end
+    end
+  end
+  -- Rebuild player aggregates if we removed anything
+  if deleted > 0 then
+    MVP.Util.DebugPrint(("Removed %d vouch(es) for Unknown players"):format(deleted))
+    self:_rebuildAgg()
+  end
 end
 
 -- Cleanup: Delete vouches older than 100 days (except ninja looter)
@@ -541,6 +563,8 @@ function MVP.Data:Wipe()
   self:_rebuildAgg()
   self:_notifyChanged()
 end
+
+
 
 -- Reputation tier mapping based on net reputation score (pos - neg)
 function MVP.Data:ReputationTier(rep)

@@ -4,11 +4,25 @@ MVP.UI_DB = MVP.UI_DB or {}
 local UI = MVP.UI_DB
 
 local ROLE_FILTERS = {
-  { value = "ALL", label = "All Roles" },
-  { value = "TANK", label = "Tank" },
-  { value = "HEALER", label = "Healer" },
-  { value = "DPS", label = "DPS" },
+  { value = "ALL",    label = "All Roles" },
+  { value = "TANK",   label = "Tank"      },
+  { value = "HEALER", label = "Healer"    },
+  { value = "DPS",    label = "DPS"       },
 }
+
+-- Sortable columns: { id, label, xPos, width, justify }
+local COLUMNS = {
+  { id = "name",    label = "Player",       xPos =  16, width = 270, justify = "LEFT"   },
+  { id = "pos",     label = "Pos",          xPos = 300, width =  50, justify = "CENTER" },
+  { id = "neg",     label = "Neg",          xPos = 360, width =  50, justify = "CENTER" },
+  { id = "rep",     label = "Reputation",   xPos = 420, width = 150, justify = "LEFT"   },
+  { id = "toppos",  label = "Top Upvote",   xPos = 580, width = 210, justify = "LEFT"   },
+  { id = "topneg",  label = "Top Downvote", xPos = 800, width = 180, justify = "LEFT"   },
+}
+
+-- Default sort: highest neg first (original behaviour)
+UI.sortCol = UI.sortCol or "neg"
+UI.sortDir = UI.sortDir or "desc"
 
 -- Helper to check if a player is favorited
 local function isFavorite(playerKey)
@@ -158,29 +172,11 @@ function UI:Init()
   f.sync:SetSize(80, 20)
   f.sync:SetText("Sync")
   f.sync:SetScript("OnClick", function()
-    -- Set up sync tracking
-    MVP.Sync._syncInProgress = true
-    MVP.Sync._syncVouchesReceived = 0
-    MVP.Sync._syncLastReceiveTime = GetTime()
-
-    local sinceTs = (MVPDB and MVPDB.meta and MVPDB.meta.lastTs) or 0
-    local msg = "REQALL|" .. tostring(sinceTs)
-
-    -- Send via GUILD/PARTY/RAID immediately (no hardware event needed)
-    MVP.Sync:BroadcastAddonMessages(msg)
-
-    -- Also queue for channel (needs hardware event - button click counts)
-    MVP.Sync:QueueMessage(msg)
-    if MVP.Sync.FlushAllChannelMessages then
-      MVP.Sync:FlushAllChannelMessages()
-    end
-
-    MVP.Sync:StartSyncCompleteTimer()
-    print("|cff33ff99MVP|r Sync requested.")
+    MVP.Sync:RequestSync(true)  -- true = hardware event, can flush channel
   end)
 
   f.wipe = CreateFrame("Button", nil, f, "GameMenuButtonTemplate")
-  f.wipe:SetPoint("RIGHT", f.sync, "LEFT", -8, 0)  -- Anchor to sync button
+  f.wipe:SetPoint("RIGHT", f.sync, "LEFT", -8, 0)
   f.wipe:SetSize(80, 20)
   f.wipe:SetText("Wipe DB")
   f.wipe:SetScript("OnClick", function()
@@ -190,28 +186,70 @@ function UI:Init()
     print("|cff33ff99MVP|r Database wiped.")
   end)
 
-  -- Headers: { label, xPos, width, justify }
-  local headers = {
-    { "Player", 16, 270, "LEFT" },
-    { "Pos", 300, 50, "CENTER" },
-    { "Neg", 360, 50, "CENTER" },
-    { "Reputation", 420, 150, "LEFT" },
-    { "Top Upvote", 580, 210, "LEFT" },
-    { "Top Downvote", 800, 180, "LEFT" },
-  }
-  for _, h in ipairs(headers) do
-    local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    fs:SetPoint("TOPLEFT", h[2], -76)
-    fs:SetWidth(h[3])
-    fs:SetJustifyH(h[4])
-    fs:SetText(h[1])
-  end
+  -- Column headers as clickable sort buttons
+  f.headerBtns = {}
+  local function makeSortBtn(col)
+    local btn = CreateFrame("Button", nil, f)
+    btn:SetSize(col.width, 18)
+    btn:SetPoint("TOPLEFT", col.xPos, -76)
+    btn:SetNormalFontObject("GameFontNormalSmall")
+    btn:SetHighlightFontObject("GameFontHighlightSmall")
 
-  -- Scroll list (boxed)
+    local function updateLabel()
+      local arrow = ""
+      if UI.sortCol == col.id then
+        arrow = UI.sortDir == "asc" and " \226\150\178" or " \226\150\188"  -- ▲ / ▼
+      end
+      btn:SetText(col.label .. arrow)
+    end
+    updateLabel()
+    btn:SetScript("OnClick", function()
+      if UI.sortCol == col.id then
+        UI.sortDir = UI.sortDir == "asc" and "desc" or "asc"
+      else
+        UI.sortCol = col.id
+        UI.sortDir = col.id == "name" and "asc" or "desc"
+      end
+      -- Refresh all header labels
+      for _, b in ipairs(f.headerBtns) do b:updateLabel() end
+      UI:Refresh()
+    end)
+    btn.updateLabel = updateLabel
+
+    btn:SetScript("OnEnter", function()
+      GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM")
+      GameTooltip:SetText("Click to sort by " .. col.label, 1, 1, 1)
+      GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    f.headerBtns[#f.headerBtns+1] = btn
+  end
+  for _, col in ipairs(COLUMNS) do makeSortBtn(col) end
+
+  -- Detail panel (anchored from bottom, fixed height)
+  local d = CreateFrame("Frame", nil, f, "InsetFrameTemplate3")
+  d:SetPoint("BOTTOMLEFT", 12, 14)
+  d:SetSize(996, 240)
+  f.detail = d
+
+  -- Stats bar anchored to TOP of detail panel with a small gap
+  local sb = CreateFrame("Frame", nil, f)
+  sb:SetPoint("BOTTOMLEFT",  d, "TOPLEFT",  0,  2)
+  sb:SetPoint("BOTTOMRIGHT", d, "TOPRIGHT", 0,  2)
+  sb:SetHeight(18)
+  f.statsBar = sb
+
+  f.statsText = sb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  f.statsText:SetAllPoints()
+  f.statsText:SetJustifyH("CENTER")
+  f.statsText:SetText("")
+
+  -- Scroll list fills from column headers down to top of stats bar
   local listBox = CreateFrame("Frame", nil, f, "InsetFrameTemplate3")
-  listBox:SetPoint("TOPLEFT", 12, -92)
-  listBox:SetPoint("BOTTOMLEFT", 12, 270)
-  listBox:SetWidth(992)
+  listBox:SetPoint("TOPLEFT",     12, -92)
+  listBox:SetPoint("BOTTOMLEFT",  sb, "TOPLEFT",  0,  2)
+  listBox:SetPoint("BOTTOMRIGHT", sb, "TOPRIGHT", 0,  2)
   f.listBox = listBox
 
   local sf = CreateFrame("ScrollFrame", nil, listBox, "UIPanelScrollFrameTemplate")
@@ -225,12 +263,6 @@ function UI:Init()
   f.listSF = sf
   f.listContent = content
   f.listRows = {}
-
-  -- Detail panel
-  local d = CreateFrame("Frame", nil, f, "InsetFrameTemplate3")
-  d:SetPoint("BOTTOMLEFT", 12, 14)
-  d:SetSize(996, 240)
-  f.detail = d
 
   -- Player name (large)
   d.title = d:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
@@ -618,49 +650,35 @@ function UI:_createListRow(parent, y, item, rowIndex)
       end
 
       if not agg then
-        send(string.format("[MVP] %s - No reputation data", pname))
+        send(string.format("[MVP] %s - No reputation data in database.", pname))
         return
       end
 
-      local pos = agg.pos or 0
-      local neg = agg.neg or 0
+      local pos   = agg.pos or 0
+      local neg   = agg.neg or 0
       local total = agg.total or 0
-      local rep = agg.rep or (pos - neg)
-      local tier = agg.tier or MVP.Data:ReputationTier(rep)
 
-      -- Line 1: Header with name
-      send(string.format("[MVP] ====== %s ======", pname))
+      -- Line 1: header
+      send(string.format("[MVP] Player Report: %s", pname))
 
-      -- Line 2: Reputation summary
-      local repSign = rep >= 0 and "+" or ""
-      send(string.format("[MVP] %s (%s%d) - +%d Upvotes, -%d Downvotes (%d total)", tier, repSign, rep, pos, neg, total))
+      -- Line 2: vouch counts
+      send(string.format("[MVP] %d total vouches — %d positive, %d negative", total, pos, neg))
 
-      -- Line 3: Role breakdown (if any votes)
-      local roleParts = {}
-      for _, role in ipairs({ "TANK", "HEALER", "DPS" }) do
-        local r = agg.roles and agg.roles[role]
-        if r and (r.total or 0) > 0 then
-          roleParts[#roleParts+1] = string.format("%s: +%d/-%d", MVP.Data.ROLE_LABELS[role], r.pos or 0, r.neg or 0)
-        end
-      end
-      if #roleParts > 0 then
-        send("[MVP] " .. table.concat(roleParts, ", "))
-      end
-
-      -- Line 4: Best and worst feedback
+      -- Line 3: top comments (if any)
       local topPK, topPV = MVP.Data:TopReason(agg.posReasons)
       local topNK, topNV = MVP.Data:TopReason(agg.negReasons)
-      local feedbackParts = {}
-      if topPK then
-        local lbl = MVP.Data.POS_REASONS[topPK] or topPK
-        feedbackParts[#feedbackParts+1] = string.format("Best: %s (%d)", lbl, topPV)
-      end
-      if topNK then
-        local lbl = MVP.Data.NEG_REASONS[topNK] or topNK
-        feedbackParts[#feedbackParts+1] = string.format("Worst: %s (%d)", lbl, topNV)
-      end
-      if #feedbackParts > 0 then
-        send("[MVP] " .. table.concat(feedbackParts, ", "))
+      local hasFeedback = (topPK and topPV and topPV > 0) or (topNK and topNV and topNV > 0)
+      if hasFeedback then
+        local parts = {}
+        if topPK and topPV and topPV > 0 then
+          local lbl = MVP.Data.POS_REASONS[topPK] or topPK
+          parts[#parts+1] = string.format("+%s (%d)", lbl, topPV)
+        end
+        if topNK and topNV and topNV > 0 then
+          local lbl = MVP.Data.NEG_REASONS[topNK] or topNK
+          parts[#parts+1] = string.format("-%s (%d)", lbl, topNV)
+        end
+        send("[MVP] Top comments: " .. table.concat(parts, ", "))
       end
 
       return
@@ -698,18 +716,17 @@ function UI:Refresh()
   local f = self.frame
   if not f then return end
 
-  local query = f.search:GetText() or ""
+  local query     = f.search:GetText() or ""
   local roleFilter = UI.roleFilter or "ALL"
-  local results = MVP.Data:SearchPlayers(query, roleFilter)
+  local results   = MVP.Data:SearchPlayers(query, roleFilter)
   local repFilter = UI.repFilter or "ALL"
   if repFilter ~= "ALL" then
     local filtered = {}
     for _, item in ipairs(results) do
       local agg = item.agg or MVP.Data:GetPlayerAgg(item.key)
       local repVal = (agg and (agg.rep or ((agg.pos or 0) - (agg.neg or 0)))) or 0
-      local tier = (agg and (agg.tier or MVP.Data:ReputationTier(repVal))) or "Neutral"
+      local tier   = (agg and (agg.tier or MVP.Data:ReputationTier(repVal))) or "Neutral"
       if tier == repFilter then
-        -- keep agg attached for later rendering
         item.agg = agg
         filtered[#filtered+1] = item
       end
@@ -717,40 +734,91 @@ function UI:Refresh()
     results = filtered
   end
 
-  -- Sort favorites first if enabled
+  -- ── Column sort ────────────────────────────────────────────────────────────
+  local col = UI.sortCol or "neg"
+  local asc = (UI.sortDir == "asc")
+
+  -- Helper: get the sortable value for a column id
+  local function colVal(item, colId)
+    local agg = item.agg
+    if not agg then return colId == "name" and item.key or 0 end
+    if colId == "name"   then return (item.key or ""):lower() end
+    if colId == "pos"    then return agg.pos or 0 end
+    if colId == "neg"    then return agg.neg or 0 end
+    if colId == "rep"    then return agg.rep or ((agg.pos or 0) - (agg.neg or 0)) end
+    if colId == "toppos" then
+      local k = MVP.Data:GetTopReason(agg.posReasons)
+      return k and (MVP.Data.POS_REASONS[k] or k):lower() or ""
+    end
+    if colId == "topneg" then
+      local k = MVP.Data:GetTopReason(agg.negReasons)
+      return k and (MVP.Data.NEG_REASONS[k] or k):lower() or ""
+    end
+    return 0
+  end
+
+  table.sort(results, function(a, b)
+    local av = colVal(a, col)
+    local bv = colVal(b, col)
+    if type(av) == "string" then
+      return asc and (av < bv) or (av > bv)
+    else
+      return asc and (av < bv) or (av > bv)
+    end
+  end)
+
+  -- Favorites-first override (secondary sort within each fav/non-fav group)
   if UI.favoritesFirst then
     table.sort(results, function(a, b)
       local aFav = isFavorite(a.key)
       local bFav = isFavorite(b.key)
       if aFav and not bFav then return true end
       if bFav and not aFav then return false end
-      -- If both fav or both not fav, sort by neg count (original sort)
-      return (a.agg and a.agg.neg or 0) > (b.agg and b.agg.neg or 0)
+      -- preserve column sort within group
+      local av = colVal(a, col)
+      local bv = colVal(b, col)
+      if type(av) == "string" then
+        return asc and (av < bv) or (av > bv)
+      else
+        return asc and (av < bv) or (av > bv)
+      end
     end)
   end
 
-  -- Hide all existing rows first
+  -- ── Stats bar ──────────────────────────────────────────────────────────────
+  if f.statsText then
+    -- Count unique players and total vouches across entire DB (not filtered)
+    local totalPlayers = 0
+    local totalVouches = 0
+    if MVPDB and MVPDB.players then
+      for _ in pairs(MVPDB.players) do totalPlayers = totalPlayers + 1 end
+    end
+    if MVPDB and MVPDB.vouches then
+      for _ in pairs(MVPDB.vouches) do totalVouches = totalVouches + 1 end
+    end
+    local showing = #results
+    f.statsText:SetText(string.format(
+      "|cff66ff66%d|r |cff888888unique players in DB  —  |r|cffaaaaaa%d|r |cff888888total vouches in database|r",
+      totalPlayers, totalVouches))
+  end
+
+  -- ── Render rows ────────────────────────────────────────────────────────────
   self:_hideAllRows()
 
   local rowHeight = 22
   f.listContent:SetSize(992, math.max(#results * rowHeight, 1))
 
-  -- Frame pooling: reuse existing rows, create new only if needed
   f.listRows = f.listRows or {}
   for i, item in ipairs(results) do
-    local y = -((i-1) * rowHeight)
+    local y   = -((i-1) * rowHeight)
     local row = f.listRows[i]
     if row then
-      -- Reuse existing row - just update its data
       self:_updateListRow(row, y, item, i)
     else
-      -- Create new row only if we don't have enough
       row = self:_createListRow(f.listContent, y, item, i)
       f.listRows[i] = row
     end
   end
-
-  -- Any excess rows beyond results count stay hidden (already hidden by _hideAllRows)
 
   if UI.selected then
     self:_renderDetail(UI.selected)

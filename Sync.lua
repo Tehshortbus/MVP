@@ -410,6 +410,29 @@ function Sync:RequestSyncAll(sinceTs)
   self:QueueMessage(msg)
 end
 
+-- Shared sync trigger used by both the DB Sync button and /mvp sync command.
+-- hardwareEvent = true when called from a real button click (allows channel flush).
+function Sync:RequestSync(hardwareEvent)
+  self._syncInProgress = true
+  self._syncVouchesReceived = 0
+  self._syncLastReceiveTime = GetTime()
+
+  local sinceTs = (MVPDB and MVPDB.meta and MVPDB.meta.lastTs) or 0
+  local msg = "REQALL|" .. tostring(sinceTs)
+
+  -- Broadcast to guild/party/raid (no hardware event needed)
+  self:BroadcastAddonMessages(msg)
+
+  -- Queue for addon channel; only flush immediately if we have a hardware event
+  self:QueueMessage(msg)
+  if hardwareEvent and self.FlushAllChannelMessages then
+    self:FlushAllChannelMessages()
+  end
+
+  self:StartSyncCompleteTimer()
+  print("|cff33ff99MVP|r Sync requested.")
+end
+
 -- Handle sync request - respond via WHISPER directly to requester (works AFK!)
 function Sync:HandleReqAll(sender, sinceTs)
   sinceTs = tonumber(sinceTs or "0") or 0

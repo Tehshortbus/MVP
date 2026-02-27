@@ -64,5 +64,6 @@ end
 function MVP.Util.PlayerKeyFromUnit(unit)
   if not unit or not UnitExists(unit) then return nil end
   local name = UnitName(unit)
+  if not name or name == "Unknown" or name == UNKNOWNOBJECT or name == "" then return nil end
   return MVP.Util.NormalizePlayerKey(name)
 end

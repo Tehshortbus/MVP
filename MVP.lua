@@ -25,10 +25,8 @@ SlashCmdList["MVP"] = function(msg)
     print("  /mvp end - End run and open vouch window")
     print("  /mvp db - Open reputation database")
     print("  /mvp status - Show current run status")
-    print("  /mvp sync - Show sync status")
+    print("  /mvp sync - Request a full sync from nearby MVP users")
     print("  /mvp sources - Show anti-fraud source tracking stats")
-    print("  /mvp test - Test vouch UI with dummy players")
-    print("  /mvp debug - Toggle debug messages")
     return
   end
 
@@ -38,32 +36,30 @@ SlashCmdList["MVP"] = function(msg)
   end
 
   if cmd == "sync" then
-    local status = MVP.Sync:GetStatus()
-    print("|cff33ff99MVP|r Sync Status:")
-    print("  Channel: " .. tostring(status.channelName) .. " (id: " .. tostring(status.channelId) .. ")")
-    print("  Group: " .. tostring(status.groupDistribution))
-    print("  Prefix: " .. tostring(status.prefix))
-    print("  Queue: " .. tostring(status.queueLength) .. " messages")
-    print("  Frame: " .. (status.frameExists and "OK" or "MISSING"))
+    MVP.Sync:RequestSync(false)  -- no hardware event from slash command
     return
   end
 
+  --[[ /mvp debug - Toggle debug messages (disabled)
   if cmd == "debug" then
     MVPConfig = MVPConfig or {}
     MVPConfig.debug = not MVPConfig.debug
     print("|cff33ff99MVP|r Debug mode: " .. (MVPConfig.debug and "ON" or "OFF"))
     return
   end
+  --]]
 
   if cmd == "db" then
     MVP.UI_DB:Toggle()
     return
   end
 
+  --[[ /mvp test - Test vouch UI with dummy players (disabled)
   if cmd == "test" then
     MVP:TestUI()
     return
   end
+  --]]
 
   if cmd == "end" then
     MVP:EndRun("manual")
@@ -114,9 +110,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if MVP._inited then
       -- Skip processing in raids/BGs - MVP is for 5-man dungeons only
       if IsInRaid() then return end
-      MVP:PrintPartyReputations()
-      MVP.Util.DebugPrint("GROUP_ROSTER_UPDATE - checking run state")
-      MVP:TickRunState()
+      -- Delay slightly so WoW has time to resolve all player names from Unknown
+      C_Timer.After(1.5, function()
+        if IsInRaid() then return end
+        MVP:PrintPartyReputations()
+        MVP.Util.DebugPrint("GROUP_ROSTER_UPDATE (delayed) - checking run state")
+        MVP:TickRunState()
+      end)
     end
   elseif event == "ZONE_CHANGED_NEW_AREA" then
     -- Skip raids/BGs
@@ -306,9 +306,9 @@ function MVP:FormatReportForPlayerKey(playerKey)
 
   local msg = string.format("MVP: %s - %s (%d)", key, tier, rep)
   if rep < 0 then
-    local topNegK, topNegV = MVP.Data:TopReason(agg.negReasons)
+    local topNegK, topNegV = MVP.Data:GetTopReason(agg.negReasons)
     if topNegK and topNegV and topNegV > 0 then
-      local lbl = MVP.Data.NEG_REASONS[topNegK] or topNegK
+      local lbl = MVP.Data.NEG_REASONS[topNegK] or MVP.Data:GetReasonLabel(topNegK, true)
       msg = msg .. string.format(" - Top Downvote Comment: %s (%d)", lbl, topNegV)
     end
   end
@@ -576,7 +576,8 @@ function MVP:PrintPartyReputations()
       local nameHex = MVP:ClassColorHex(classFile)
       local line = string.format("|cff33ff99MVP|r |cff%s%s|r - |cff%s%s (%d)|r", nameHex, k, hex, tier, rep)
       if rep < 0 and topNegK and topNegV and topNegV > 0 then
-        line = line .. string.format("  |cff%sTop -: %s (%d)|r", hex, topNegK, topNegV)
+        local negLbl = MVP.Data.NEG_REASONS[topNegK] or MVP.Data:GetReasonLabel(topNegK, true)
+        line = line .. string.format("  |cff%sTop -: %s (%d)|r", hex, negLbl, topNegV)
       end
       print(line)
       -- Play warning sound for bad reputation players (Unfriendly or worse)
@@ -608,7 +609,8 @@ function MVP:PrintPartyReputations()
     local nameHex = MVP:ClassColorHex(classFile)
     local line = string.format("  |cff%s%s|r - |cff%s%s (%d)|r", nameHex, k, hex, tier, rep)
     if rep < 0 and topNegK and topNegV and topNegV > 0 then
-      line = line .. string.format("  |cff%sTop -: %s (%d)|r", hex, topNegK, topNegV)
+      local negLbl = MVP.Data.NEG_REASONS[topNegK] or MVP.Data:GetReasonLabel(topNegK, true)
+      line = line .. string.format("  |cff%sTop -: %s (%d)|r", hex, negLbl, topNegV)
     end
     print(line)
     -- Play warning sound for bad reputation players (Unfriendly or worse)
@@ -934,13 +936,18 @@ function MVP:ExpandParticipants()
   end
 
   -- Mark players who left
+  local anyLeft = false
   for _, p in ipairs(R.participantsOrdered) do
     local k = p.key
     if R.participants[k] and not currentSet[k] and not R.participants[k].left then
       R.participants[k].left = true
       print(("|cff33ff99MVP|r Player left run: %s (still trackable for vouching)"):format(k))
+      anyLeft = true
       MVP:SaveRunState()
     end
+  end
+  if anyLeft then
+    print("|cff33ff99MVP|r If the run is ending early, |cff00ff00/mvp end|r will trigger vouching.")
   end
 end
 
