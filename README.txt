@@ -2,9 +2,6 @@
   MVP - Dungeon Vouches (TBC Anniversary Edition)
   Version 1.0.0
 ============================================================
-
-DESCRIPTION
-------------------------------------------------------------
 MVP is a reputation-tracking addon for 5-man heroic
 dungeons. After each run, you rate your party members
 with a positive or negative vouch. These vouches are
@@ -15,7 +12,9 @@ When you open the LFG tool in game, MVP displays a tooltip
 below the LFG window showing that players reputation if
 they have been vouched for previously.
 
+Make sure you rename the folder once unzipped to: MVP
 
+------------------------------------------------------------
 HOW IT WORKS
 ------------------------------------------------------------
 1. Run a dungeon with a party.
@@ -33,7 +32,7 @@ considerably serious and never fully decays is the Ninja Looter
 negative comment. Reputation decays 1% per day (floor 0%), 
 except Ninja Looter which floors at 10% permanently.
 
-
+------------------------------------------------------------
 REPUTATION TIERS
 ------------------------------------------------------------
   Exalted      	100+    		(orange)
@@ -46,6 +45,7 @@ REPUTATION TIERS
   Hated        	-80 and below  	(dark red)
 
 
+------------------------------------------------------------
 DATABASE WINDOW (/mvp db)
 ------------------------------------------------------------
 - Searchable, sortable list of all vouched players.
@@ -57,6 +57,7 @@ DATABASE WINDOW (/mvp db)
 - Favorites appear at the top of the list.
 
 
+------------------------------------------------------------
 SLASH COMMANDS
 ------------------------------------------------------------
   /mvp or /mvp help - - displays all the /mvp commands in your chat window
