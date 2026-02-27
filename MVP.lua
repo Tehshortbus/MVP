@@ -35,6 +35,41 @@ SlashCmdList["MVP"] = function(msg)
     return
   end
 
+  if cmd == "lfgframes" then
+    -- Temporary diagnostic: find which LFG scroll frames exist
+    local names = {
+      "LFGBrowseFrame","LFGBrowseFrameScrollBox","LFGListFrame",
+      "LFGListFrameScrollBox","LFGSearchFrame","LFGSearchFrameScrollBox",
+      "LFGParentFrame","LFGParentFrameScrollBox",
+    }
+    for _, n in ipairs(names) do
+      local f = _G[n]
+      if f then
+        local st = f.ScrollTarget and "has ScrollTarget" or "no ScrollTarget"
+        print("|cff33ff99MVP|r "..n.." EXISTS "..st)
+        -- Dump visible children of ScrollTarget
+        if f.ScrollTarget then
+          local vis = 0
+          for _, c in ipairs({f.ScrollTarget:GetChildren()}) do
+            if c:IsVisible() and c:GetHeight() > 10 then vis = vis + 1 end
+          end
+          print("  visible children: "..vis)
+        end
+      end
+    end
+    -- Also check LFGBrowseFrame children for scroll frames
+    if LFGBrowseFrame then
+      print("LFGBrowseFrame children:")
+      for _, c in ipairs({LFGBrowseFrame:GetChildren()}) do
+        local name = c:GetName() or "(unnamed)"
+        local ot = c:GetObjectType()
+        local vis = c:IsVisible() and "visible" or "hidden"
+        print("  "..ot.." "..name.." "..vis)
+      end
+    end
+    return
+  end
+
   if cmd == "sync" then
     MVP.Sync:RequestSync(false)  -- no hardware event from slash command
     return

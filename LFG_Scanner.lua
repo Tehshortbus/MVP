@@ -1,17 +1,12 @@
 -- MVP - LFG_Scanner.lua
--- Uses LFGBrowseFrameScrollBox.ScrollTarget children (confirmed working v0.2.8 path).
--- Tooltip anchors to the RIGHT of GameTooltip, not overlapping it.
--- Scan loop only re-hooks when child count changes (performance).
+-- Event-driven: hooks entries when search results arrive.
+-- OnUpdate only runs briefly after results load, then stops.
 local addonName, MVP = ...
 MVP.LFG_Scanner = MVP.LFG_Scanner or {}
 local Scanner = MVP.LFG_Scanner
 
-Scanner._isHooked       = false
-Scanner._updateThrottle = 0
-Scanner.UPDATE_INTERVAL = 0.5
-Scanner._hookedEntries  = {}
-Scanner._nameCache      = {}
-Scanner._lastChildCount = -1
+Scanner._isHooked      = false
+Scanner._hookedEntries = {}
 
 -- ─── MVP Tooltip ──────────────────────────────────────────────────────────────
 
@@ -29,81 +24,77 @@ local TIER_HEX = {
   Friendly="33b233", Honored="33cc66", Revered="4d99e6", Exalted="ff8000",
 }
 
-local function addPlayerLine(tip, playerKey, isLeader)
+local function addPlayerLine(tip, playerKey)
   local agg   = MVP.Data:GetPlayerAgg(playerKey)
   local isFav = MVPConfig and MVPConfig.favorites and MVPConfig.favorites[playerKey]
-  local star  = isLeader and "|cffFFD100*|r " or "  "
 
   if not agg or (agg.total or 0) == 0 then
-    tip:AddLine(star.."|cffffffff"..playerKey.."|r  |cff666666no data|r")
+    tip:AddLine("|cffffffff"..playerKey.."|r  |cff666666no data|r")
     return
   end
 
   local rep  = agg.rep or ((agg.pos or 0) - (agg.neg or 0))
   local tier = agg.tier or MVP.Data:ReputationTier(rep)
-  local sign = rep >= 0 and "+" or ""
   local fav  = isFav and " |cffFFD100[Fav]|r" or ""
 
   tip:AddDoubleLine(
-    star.."|cffffffff"..playerKey.."|r"..fav,
-    "|cff"..(TIER_HEX[tier] or "9e9e9e")..tier.." "..sign..rep..
-    "|r  |cff66ff66+"..(agg.pos or 0)..
-    "|r|cff888888/|r|cffff6666-"..(agg.neg or 0).."|r",
+    "|cffffffff"..playerKey.."|r"..fav,
+    "|cff"..(TIER_HEX[tier] or "9e9e9e")..tier
+      ..(rep >= 0 and " +" or " ")..rep
+      .."|r  |cff66ff66+"..(agg.pos or 0)
+      .."|r|cff888888/|r|cffff6666-"..(agg.neg or 0).."|r",
     1,1,1, 1,1,1)
 
   local topNK, topNV = MVP.Data:GetTopReason(agg.negReasons)
   if topNK and topNV and topNV > 0 and
      (tier=="Hated" or tier=="Hostile" or tier=="Unfriendly") then
-    local lbl = MVP.Data.NEG_REASONS[topNK] or MVP.Data:GetReasonLabel(topNK, true)
+    local lbl = MVP.Data.NEG_REASONS[topNK] or topNK
     tip:AddLine("   |cffff6666! "..lbl.." ("..topNV..")|r")
   end
 end
 
-local function positionMVPTip()
-  local tip = GetMVPTip()
-  tip:ClearAllPoints()
-  -- Anchor centered just below the bottom of the LFG frame
-  if LFGBrowseFrame then
-    tip:SetPoint("TOP", LFGBrowseFrame, "BOTTOM", 0, -4)
-    return
-  end
-  tip:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
-end
-
-local function showMVPTooltip(entry, playerKey)
+local function showMVPTooltip(playerKey)
   local tip = GetMVPTip()
   tip:ClearLines()
   tip:SetOwner(UIParent, "ANCHOR_NONE")
   tip:AddLine("|cff33ff99MVP|r")
-  addPlayerLine(tip, playerKey, false)
+  addPlayerLine(tip, playerKey)
   tip:Show()
-  positionMVPTip()
+  tip:ClearAllPoints()
+  if LFGBrowseFrame then
+    tip:SetPoint("TOP", LFGBrowseFrame, "BOTTOM", 0, -4)
+  else
+    tip:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
+  end
 end
 
--- ─── Name extraction (v0.2.8 approach) ───────────────────────────────────────
+-- ─── Name extraction ─────────────────────────────────────────────────────────
 
 local function extractPlayerName(entry)
   if entry.Name then
-    if type(entry.Name) == "table" and entry.Name.GetText then
-      local t = entry.Name:GetText()
+    local n = entry.Name
+    if type(n) == "table" and n.GetText then
+      local t = n:GetText()
       if t and t ~= "" then return t:match("^(%S+)") end
-    elseif type(entry.Name) == "string" and entry.Name ~= "" then
-      return entry.Name:match("^(%S+)")
+    elseif type(n) == "string" and n ~= "" then
+      return n:match("^(%S+)")
     end
   end
-  if entry.name and type(entry.name) == "string" and entry.name ~= "" then
+  if type(entry.name) == "string" and entry.name ~= "" then
     return entry.name:match("^(%S+)")
   end
-  for _, child in pairs({entry:GetRegions()}) do
-    if child:GetObjectType() == "FontString" then
-      local text = child:GetText()
+  for _, region in ipairs({entry:GetRegions()}) do
+    if region:GetObjectType() == "FontString" then
+      local text = region:GetText()
       if text and text ~= ""
          and not text:match("^%d")
          and not text:match("^Lv")
          and not text:match("Members")
          and not text:match("Roles")
+         and not text:match("activities")
          and not text:match("%(") then
-        return text:match("^(%S+)")
+        local word = text:match("^(%S+)")
+        if word and #word >= 2 then return word end
       end
     end
   end
@@ -117,16 +108,12 @@ function Scanner:HookEntry(entry)
   self._hookedEntries[entry] = true
 
   entry:HookScript("OnEnter", function(self_entry)
-    -- Always re-extract: scroll reuses frames with new player data
     local raw = extractPlayerName(self_entry)
-    local playerKey = nil
-    if raw then
-      local k = MVP.Util.NormalizePlayerKey(raw)
-      if k and k ~= "" and k ~= "Unknown" then
-        playerKey = k
-      end
+    if not raw then return end
+    local k = MVP.Util.NormalizePlayerKey(raw)
+    if k and k ~= "" and k ~= "Unknown" then
+      showMVPTooltip(k)
     end
-    if playerKey then showMVPTooltip(self_entry, playerKey) end
   end)
 
   entry:HookScript("OnLeave", function()
@@ -134,55 +121,76 @@ function Scanner:HookEntry(entry)
   end)
 end
 
--- ─── Scan loop ────────────────────────────────────────────────────────────────
+-- ─── Scan ScrollTarget for unhookedvisible entries ───────────────────────────
 
-function Scanner:ScanLFGFrame()
-  if not LFGBrowseFrame or not LFGBrowseFrame:IsVisible() then return end
-
-  local scrollBox = LFGBrowseFrameScrollBox
-  if not scrollBox or not scrollBox.ScrollTarget then return end
-
-  local children = { scrollBox.ScrollTarget:GetChildren() }
-
-  -- Cheap change hash: count of visible children + identity of first visible one
-  -- This catches both list length changes AND scroll position changes
-  local visCount = 0
-  local firstId  = 0
-  for _, child in ipairs(children) do
+function Scanner:ScanScrollTarget(scrollTarget)
+  if not scrollTarget then return 0 end
+  local count = 0
+  for _, child in ipairs({scrollTarget:GetChildren()}) do
     if child:IsVisible() and child:GetHeight() > 10 then
-      visCount = visCount + 1
-      if firstId == 0 then firstId = child:GetBottom() or 0 end
+      if not self._hookedEntries[child] then
+        self:HookEntry(child)
+        count = count + 1
+      end
     end
   end
-  local hash = visCount * 100000 + math.floor(firstId)
+  return count
+end
 
-  if hash == self._lastChildCount then return end
-  self._lastChildCount = hash
+-- Scan the primary scroll box (Group Browser)
+function Scanner:ScanPrimary()
+  local sb = LFGBrowseFrameScrollBox
+  if sb and sb.ScrollTarget then
+    return self:ScanScrollTarget(sb.ScrollTarget)
+  end
+  return 0
+end
 
-  for _, child in ipairs(children) do
-    if child:IsVisible() and child:GetHeight() > 10 then
-      self:HookEntry(child)
+-- ─── OnUpdate: runs briefly after results load, stops when done ──────────────
+
+local SCAN_INTERVAL = 0.25
+local MAX_SCAN_TIME = 3.0   -- stop scanning after 3s of no new entries
+
+function Scanner:OnUpdate(elapsed)
+  self._updateThrottle = (self._updateThrottle or 0) + elapsed
+  if self._updateThrottle < SCAN_INTERVAL then return end
+  self._updateThrottle = 0
+
+  if not LFGBrowseFrame or not LFGBrowseFrame:IsVisible() then
+    self._frame:Hide()
+    return
+  end
+
+  local newlyHooked = self:ScanPrimary()
+
+  if newlyHooked > 0 then
+    -- Found new entries; reset the idle timer
+    self._scanIdleTime = 0
+  else
+    -- No new entries this tick; count idle time
+    self._scanIdleTime = (self._scanIdleTime or 0) + SCAN_INTERVAL
+    if self._scanIdleTime >= MAX_SCAN_TIME then
+      -- Been idle for 3s with no new entries - stop polling
+      self._frame:Hide()
     end
   end
 end
 
--- ─── OnUpdate (throttled) ────────────────────────────────────────────────────
-
-function Scanner:OnUpdate(elapsed)
-  self._updateThrottle = (self._updateThrottle or 0) + elapsed
-  if self._updateThrottle < self.UPDATE_INTERVAL then return end
+-- Wake the scanner back up (scroll, refresh, re-open)
+function Scanner:WakeUp()
+  self._scanIdleTime = 0
   self._updateThrottle = 0
-  self:ScanLFGFrame()
+  if self._frame then self._frame:Show() end
 end
 
 -- ─── Init ─────────────────────────────────────────────────────────────────────
 
 function Scanner:Init()
   if self._isHooked then return end
-  if not LFGBrowseFrame then
-    MVP.Util.DebugPrint("LFG Scanner: LFGBrowseFrame not found, deferring init")
-    return false
-  end
+  if not LFGBrowseFrame then return false end
+
+  self._updateThrottle = 0
+  self._scanIdleTime   = 0
 
   self._frame = CreateFrame("Frame")
   self._frame:Hide()
@@ -190,27 +198,41 @@ function Scanner:Init()
     Scanner:OnUpdate(elapsed)
   end)
 
+  -- Wake on LFG open
   LFGBrowseFrame:HookScript("OnShow", function()
-    Scanner._lastChildCount = -1   -- force rescan on next tick
-    Scanner._frame:Show()
-    Scanner:ScanLFGFrame()
+    -- Don't wipe hooks on show - entries persist across open/close
+    Scanner:WakeUp()
   end)
 
+  -- Stop tooltip on LFG close; keep hooks (entries are reused)
   LFGBrowseFrame:HookScript("OnHide", function()
     Scanner._frame:Hide()
     if MVPTip then MVPTip:Hide() end
-    wipe(Scanner._nameCache)
-    wipe(Scanner._hookedEntries)
-    Scanner._lastChildCount = -1
   end)
 
+  -- Wake on scroll (new entries become visible)
+  local sb = _G["LFGBrowseFrameScrollBar"]
+  if sb then
+    sb:HookScript("OnValueChanged", function()
+      Scanner:WakeUp()
+    end)
+  end
+
+  -- Wake on search results arriving
+  local evtFrame = CreateFrame("Frame")
+  evtFrame:RegisterEvent("LFG_LIST_SEARCH_RESULTS_RECEIVED")
+  evtFrame:RegisterEvent("LFG_LIST_SEARCH_RESULT_UPDATED")
+  evtFrame:SetScript("OnEvent", function()
+    -- Short delay so Blizzard populates the frame first
+    C_Timer.After(0.15, function() Scanner:WakeUp() end)
+  end)
+
+  -- If already open
   if LFGBrowseFrame:IsVisible() then
-    self._frame:Show()
-    self:ScanLFGFrame()
+    self:WakeUp()
   end
 
   self._isHooked = true
-  MVP.Util.DebugPrint("LFG Scanner: Initialized")
   return true
 end
 
