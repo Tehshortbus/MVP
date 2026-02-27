@@ -541,7 +541,9 @@ function Data:SearchPlayers(query, roleFilter)
   end
 
   table.sort(results, function(a, b)
-    return (a.agg.neg or 0) > (b.agg.neg or 0)
+    local an = a and a.agg and (a.agg.neg or 0) or 0
+    local bn = b and b.agg and (b.agg.neg or 0) or 0
+    return an > bn
   end)
   return results
 end

@@ -740,31 +740,35 @@ function UI:Refresh()
 
   -- Helper: get the sortable value for a column id
   local function colVal(item, colId)
+    if not item then return colId == "name" and "" or 0 end
     local agg = item.agg
-    if not agg then return colId == "name" and item.key or 0 end
+    if not agg then return colId == "name" and (item.key or ""):lower() or 0 end
     if colId == "name"   then return (item.key or ""):lower() end
     if colId == "pos"    then return agg.pos or 0 end
     if colId == "neg"    then return agg.neg or 0 end
     if colId == "rep"    then return agg.rep or ((agg.pos or 0) - (agg.neg or 0)) end
     if colId == "toppos" then
-      local k = MVP.Data:GetTopReason(agg.posReasons)
-      return k and (MVP.Data.POS_REASONS[k] or k):lower() or ""
+      local _, v = MVP.Data:GetTopReason(agg.posReasons)
+      return v or 0
     end
     if colId == "topneg" then
-      local k = MVP.Data:GetTopReason(agg.negReasons)
-      return k and (MVP.Data.NEG_REASONS[k] or k):lower() or ""
+      local _, v = MVP.Data:GetTopReason(agg.negReasons)
+      return v or 0
     end
     return 0
   end
 
   table.sort(results, function(a, b)
+    if not a then return false end
+    if not b then return true end
     local av = colVal(a, col)
     local bv = colVal(b, col)
-    if type(av) == "string" then
-      return asc and (av < bv) or (av > bv)
-    else
-      return asc and (av < bv) or (av > bv)
+    -- Ensure same type for comparison
+    if type(av) ~= type(bv) then
+      av = tostring(av)
+      bv = tostring(bv)
     end
+    if asc then return av < bv else return av > bv end
   end)
 
   -- Favorites-first override (secondary sort within each fav/non-fav group)
@@ -777,11 +781,7 @@ function UI:Refresh()
       -- preserve column sort within group
       local av = colVal(a, col)
       local bv = colVal(b, col)
-      if type(av) == "string" then
-        return asc and (av < bv) or (av > bv)
-      else
-        return asc and (av < bv) or (av > bv)
-      end
+      if asc then return av < bv else return av > bv end
     end)
   end
 

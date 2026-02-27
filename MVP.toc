@@ -2,7 +2,7 @@
 ## Title: MVP |cffffffffDungeon Vouches|r
 ## Notes: End-of-dungeon vouch + reputation database shared via the MVPdata channel (TBC Anniversary 2.5.5).
 ## Author: Tehshortbus
-## Version: 1.0.0
+## Version: 1.0.3
 ## SavedVariables: MVPDB, MVPConfig
 
 MVP.lua
