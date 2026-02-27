@@ -1,6 +1,6 @@
 ============================================================
   MVP - Dungeon Vouches (TBC Anniversary Edition)
-  Version 1.0.0
+  Version 1.0.3
 ============================================================
 MVP is a reputation-tracking addon for 5-man heroic
 dungeons. After each run, you rate your party members
