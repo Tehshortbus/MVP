@@ -21,14 +21,14 @@ HOW IT WORKS
 2. When the dungeon ends (or you type /mvp end),
    a vouch window opens listing your party members.
 3. For each player, select their role, give a
-   thumbs up or thumbs down, and optionally choose
-   a reason (e.g. Skilled Player, Slow, Ninja
-   Looter, etc.).
+   thumbs up and optionally choose
+   a reason or thumbs down and select a reason.  
+(e.g. Skilled Player, Slow, Ninja Looter, etc.).
 4. Your vouches are saved locally and broadcast
-   to over players running MVP.
+   to other players running MVP.
    
 Vouches will decay over time, the only negative comment that is
-considerably serious and never fully decays is the Ninja Looter
+considerably serious and never fully decays is the "Ninja Looter"
 negative comment. Reputation decays 1% per day (floor 0%), 
 except Ninja Looter which floors at 10% permanently.
 
