@@ -211,10 +211,16 @@ function Scanner:Init()
   end)
 
   -- Wake on scroll (new entries become visible)
+  -- Modern scroll bars use RegisterCallback, not HookScript
   local sb = _G["LFGBrowseFrameScrollBar"]
-  if sb then
-    sb:HookScript("OnValueChanged", function()
-      Scanner:WakeUp()
+  if sb and sb.RegisterCallback then
+    sb:RegisterCallback("OnScroll", function() Scanner:WakeUp() end, Scanner)
+  end
+  -- Also hook the scroll box itself
+  local scrollBox = _G["LFGBrowseFrameScrollBox"]
+  if scrollBox and scrollBox.RegisterCallback then
+    pcall(function()
+      scrollBox:RegisterCallback("OnScroll", function() Scanner:WakeUp() end, Scanner)
     end)
   end
 
