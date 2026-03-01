@@ -8,6 +8,9 @@ function T:Init()
   self._inited = true
 
   GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
+    -- Don't show on unit frames during raids - too much visual noise
+    if IsInRaid() then return end
+
     local name, unit = tooltip:GetUnit()
     if not unit then return end
     if not UnitExists(unit) then return end

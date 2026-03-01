@@ -45,11 +45,22 @@ local function addPlayerLine(tip, playerKey)
       .."|r|cff888888/|r|cffff6666-"..(agg.neg or 0).."|r",
     1,1,1, 1,1,1)
 
+  -- Top positive comment
+  local topPK, topPV = MVP.Data:GetTopReason(agg.posReasons)
+  if topPK and topPV and topPV > 0 then
+    local lbl = MVP.Data.POS_REASONS[topPK] or topPK
+    tip:AddLine("   |cff66ff66+ "..lbl.." ("..topPV..")|r")
+  else
+    tip:AddLine("   |cff666666+ None|r")
+  end
+
+  -- Top negative comment
   local topNK, topNV = MVP.Data:GetTopReason(agg.negReasons)
-  if topNK and topNV and topNV > 0 and
-     (tier=="Hated" or tier=="Hostile" or tier=="Unfriendly") then
+  if topNK and topNV and topNV > 0 then
     local lbl = MVP.Data.NEG_REASONS[topNK] or topNK
-    tip:AddLine("   |cffff6666! "..lbl.." ("..topNV..")|r")
+    tip:AddLine("   |cffff6666- "..lbl.." ("..topNV..")|r")
+  else
+    tip:AddLine("   |cff666666- None|r")
   end
 end
 

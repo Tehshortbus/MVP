@@ -521,7 +521,6 @@ function UI:Validate()
 
   local vouched = 0
   local tanks, heals, dps = 0, 0, 0
-  local missingNegReason = nil
 
   for _, row in ipairs(f.rows) do
     local v = row.data.vouch
@@ -531,14 +530,9 @@ function UI:Validate()
         -- skip
       else
         vouched = vouched + 1
-
-        if row.data.role == "TANK" then tanks = tanks + 1 end
+        if row.data.role == "TANK"   then tanks = tanks + 1 end
         if row.data.role == "HEALER" then heals = heals + 1 end
-        if row.data.role == "DPS" then dps = dps + 1 end
-
-        if v == "NEG" and (not row.data.reason or row.data.reason == "") then
-          missingNegReason = row.playerKey
-        end
+        if row.data.role == "DPS"    then dps   = dps   + 1 end
       end
     end
   end
@@ -547,10 +541,6 @@ function UI:Validate()
 
   if vouched < 1 then
     problems[#problems+1] = "Select at least 1 player"
-  end
-  -- Role counts shown as info only (no limit since leavers/joiners can exceed 1/1/3)
-  if missingNegReason then
-    problems[#problems+1] = "Downvote needs reason"
   end
 
   if #problems > 0 then

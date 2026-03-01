@@ -173,7 +173,7 @@ end)
 
 MVP.LastBossByInstanceName = {
   -- TBC Dungeons
-  ["Hellfire Ramparts"] = "Vazruden the Herald",
+  ["Hellfire Ramparts"] = { "Nazan", "Vazruden the Herald" }, -- both must die
   ["The Blood Furnace"] = "Keli'dan the Breaker",
   ["The Shattered Halls"] = "Warchief Kargath Bladefist",
   ["The Slave Pens"] = "Quagmirran",
@@ -246,9 +246,18 @@ MVP.LastBossByInstanceName = {
 
 -- Reverse lookup: boss name -> true (for quick checking)
 MVP.LastBossNames = {}
-for _, bossName in pairs(MVP.LastBossByInstanceName) do
-  MVP.LastBossNames[bossName] = true
+for _, bossEntry in pairs(MVP.LastBossByInstanceName) do
+  if type(bossEntry) == "table" then
+    for _, bossName in ipairs(bossEntry) do
+      MVP.LastBossNames[bossName] = true
+    end
+  else
+    MVP.LastBossNames[bossEntry] = true
+  end
 end
+
+-- Tracks which multi-boss kills have happened this run: [instanceName] = {bossName = true}
+MVP._multiBossKills = {}
 
 MVP.Run = MVP.Run or {
   state = "IDLE", -- IDLE, CANDIDATE, ACTIVE
@@ -678,6 +687,8 @@ function MVP:ResetRun()
 
   -- Clear saved state
   MVP:SaveRunState()
+  -- Clear multi-boss kill tracking for fresh run
+  wipe(MVP._multiBossKills)
 end
 
 
@@ -734,23 +745,53 @@ function MVP:OnCombatLogEvent()
 
   -- Only care about UNIT_DIED events
   if subevent ~= "UNIT_DIED" then return end
-
-  -- Check if the dead unit is a known last boss
   if not destName then return end
   if not MVP.LastBossNames[destName] then return end
 
   -- Verify we're in a matching instance
   local instanceName = GetInstanceInfo()
-  local expectedBoss = MVP.LastBossByInstanceName[instanceName]
+  local bossEntry = MVP.LastBossByInstanceName[instanceName]
+  if not bossEntry then
+    -- Boss is known but instance name doesn't match — handle wing variants
+    if MVP.LastBossNames[destName] then
+      MVP.Util.DebugPrint("Known boss killed (unmatched instance): " .. destName)
+      MVP:TriggerEndOfRun(destName)
+    end
+    return
+  end
 
-  -- If the boss that died matches the expected last boss for this instance (or any known boss)
-  if expectedBoss and destName == expectedBoss then
-    MVP.Util.DebugPrint("Last boss killed: " .. destName)
-    MVP:TriggerEndOfRun(destName)
-  elseif MVP.LastBossNames[destName] then
-    -- Boss died but might be in a different-named instance (handle wing variants)
-    MVP.Util.DebugPrint("Known last boss killed: " .. destName .. " (instance: " .. (instanceName or "unknown") .. ")")
-    MVP:TriggerEndOfRun(destName)
+  -- Single boss requirement
+  if type(bossEntry) == "string" then
+    if destName == bossEntry then
+      MVP.Util.DebugPrint("Last boss killed: " .. destName)
+      MVP:TriggerEndOfRun(destName)
+    end
+    return
+  end
+
+  -- Multi-boss requirement: all bosses in the table must die
+  if type(bossEntry) == "table" then
+    -- Track this kill
+    MVP._multiBossKills[instanceName] = MVP._multiBossKills[instanceName] or {}
+    MVP._multiBossKills[instanceName][destName] = true
+    MVP.Util.DebugPrint("Multi-boss kill tracked: " .. destName .. " in " .. instanceName)
+
+    -- Check if all required bosses are dead
+    local allDead = true
+    local lastName = destName
+    for _, required in ipairs(bossEntry) do
+      if not MVP._multiBossKills[instanceName][required] then
+        allDead = false
+        break
+      end
+    end
+
+    if allDead then
+      MVP.Util.DebugPrint("All required bosses killed in " .. instanceName)
+      -- Clear the kill tracking for this instance
+      MVP._multiBossKills[instanceName] = nil
+      MVP:TriggerEndOfRun(lastName)
+    end
   end
 end
 
