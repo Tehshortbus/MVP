@@ -173,7 +173,7 @@ end)
 
 MVP.LastBossByInstanceName = {
   -- TBC Dungeons
-  ["Hellfire Ramparts"] = { "Nazan", "Vazruden the Herald" }, -- both must die
+  ["Hellfire Ramparts"] = { "Nazan", "Vazruden" }, -- both must die
   ["The Blood Furnace"] = "Keli'dan the Breaker",
   ["The Shattered Halls"] = "Warchief Kargath Bladefist",
   ["The Slave Pens"] = "Quagmirran",
@@ -684,6 +684,8 @@ function MVP:ResetRun()
   R.promptActive = false
   R.enteredAt = 0
   R.nextPromptAt = 0
+  R.wasInGroup = false
+  R.pendingEndReason = nil
 
   -- Clear saved state
   MVP:SaveRunState()
@@ -850,15 +852,24 @@ function MVP:TickRunState()
   MVP.Util.DebugPrint(("TickRunState: state=%s inPartyInstance=%s inGroup=%s count=%d"):format(
     R.state, tostring(inPartyInstance), tostring(inGroup), groupCount))
 
-  -- End-of-run trigger: party disbanded while active
+  -- Only clear completedInstanceID when we're fully out of the instance
+  -- (curInstanceID is nil/0 = we're in the open world, not just at the graveyard)
+  if not inPartyInstance and (not curInstanceID or curInstanceID == 0) then
+    R.completedInstanceID = nil
+  end
+
+  -- End-of-run trigger: party disbanded while ACTIVE and we're not just re-entering
+  -- after a wipe (completedInstanceID guards against that case)
   if R.wasInGroup and (not inGroup) and R.state == "ACTIVE" then
-    MVP:OpenVouchWindow("Party disbanded")
-    MVP:ResetRun()
+    -- Only fire if we have no pending boss-kill end already processed
+    if not R.pendingEndReason then
+      MVP:OpenVouchWindow("Party disbanded")
+      MVP:ResetRun()
+    end
   end
   R.wasInGroup = inGroup
 
   if not inPartyInstance or not inGroup then
-    -- Leaving instance/group resets candidate state (but keeps ACTIVE snapshot if you want; MVP reset to IDLE)
     if R.state == "CANDIDATE" then
       MVP.Util.DebugPrint("Not in party instance or group - resetting to IDLE")
       R.state = "IDLE"
@@ -867,15 +878,13 @@ function MVP:TickRunState()
       R.enteredAt = 0
       R.nextPromptAt = 0
     end
-    -- Clear completedInstanceID flag when leaving instance
-    R.completedInstanceID = nil
     return
   end
 
   -- If active, just expand participants
   if R.state == "ACTIVE" and R.snapshot then
-    -- End run if instance ID changes (reset + multiple runs)
-    if R.instanceID and curInstanceID and R.instanceID ~= curInstanceID then
+    -- End run if instance ID changes (truly different instance)
+    if R.instanceID and curInstanceID and curInstanceID ~= 0 and R.instanceID ~= curInstanceID then
       MVP:OpenVouchWindow("Instance changed")
       MVP:ResetRun()
       return
@@ -889,13 +898,13 @@ function MVP:TickRunState()
   if R.state == "IDLE" then
     local name, _, _, _, _, _, _, iid = GetInstanceInfo()
     name = name or "Dungeon"
-    
-    -- Prevent starting a new run if we just completed one in this same instance
+
+    -- Prevent starting a new run if we just completed this exact instance
     if R.completedInstanceID and iid and R.completedInstanceID == iid then
-      MVP.Util.DebugPrint("Already completed a run in this instance - waiting to leave before starting new run")
+      MVP.Util.DebugPrint("Already completed a run in this instance - not restarting")
       return
     end
-    
+
     R.instanceName = name
     R.instanceID = iid
     R.instanceKey = name
@@ -907,7 +916,6 @@ function MVP:TickRunState()
 
   if R.state == "CANDIDATE" then
     if groupCount == 5 then
-      -- Auto-start when all 5 players are in the dungeon
       print("|cff33ff99MVP|r Full party detected - starting run...")
       MVP:SnapshotParty()
     else
