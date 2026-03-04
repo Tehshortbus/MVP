@@ -65,9 +65,10 @@ end
 
 local function ensureTables()
   MVPDB = MVPDB or {}
-  MVPDB.vouches = MVPDB.vouches or {}         -- [vouchId] = record
-  MVPDB.players = MVPDB.players or {}         -- [playerKey] = aggregates
-  MVPDB.meta = MVPDB.meta or { lastTs = 0, submissions = {} }   -- track latest timestamp we've stored
+  MVPDB.vouches       = MVPDB.vouches       or {}
+  MVPDB.players       = MVPDB.players       or {}
+  MVPDB.ninjaPending  = MVPDB.ninjaPending  or {}  -- [targetKey][runId] = {[rater]=true}
+  MVPDB.meta = MVPDB.meta or { lastTs = 0, submissions = {} }
 end
 
 function Data:Init()
@@ -351,16 +352,116 @@ function Data:_incReasonWeighted(map, key, weight)
   map[key] = (map[key] or 0) + weight
 end
 
+-- ─── Ninja Looter Pending System ─────────────────────────────────────────────
+-- A NINJA_LOOTER tag is held in reserve until one of two thresholds is met:
+--   • 2+ distinct raters flagged the same target within the SAME runId
+--   • 3+ distinct runIds each have at least 1 vote against the same target
+-- Only then are the pending vouches moved into the live DB with full weight.
+
+function Data:_ninjaKey(target)
+  return MVP.Util.NormalizePlayerKey(target)
+end
+
+-- Store a ninja-looter vote in the pending table.
+-- rec must have: id, ts, rater, target, targetClass, role, sign, runId, sources, isLocal
+-- Returns true if this vote triggered activation.
+function Data:_storeNinjaPending(rec)
+  ensureTables()
+  local key    = self:_ninjaKey(rec.target)
+  local runId  = rec.runId or "UNKNOWN"
+  local rater  = MVP.Util.NormalizePlayerKey(rec.rater)
+  if not key or not rater then return false end
+
+  MVPDB.ninjaPending[key] = MVPDB.ninjaPending[key] or {}
+  MVPDB.ninjaPending[key][runId] = MVPDB.ninjaPending[key][runId] or {}
+
+  -- Store the full record keyed by rater so we can move it later
+  MVPDB.ninjaPending[key][runId][rater] = rec
+
+  return self:_checkNinjaThreshold(key)
+end
+
+-- Check both thresholds for a target. Returns true if activated.
+function Data:_checkNinjaThreshold(key)
+  local pending = MVPDB.ninjaPending and MVPDB.ninjaPending[key]
+  if not pending then return false end
+
+  local distinctRuns = 0
+  for runId, voters in pairs(pending) do
+    local voterCount = 0
+    for _ in pairs(voters) do voterCount = voterCount + 1 end
+
+    -- Threshold 1: 2+ voters in the same run
+    if voterCount >= 2 then
+      self:_activateNinja(key)
+      return true
+    end
+    distinctRuns = distinctRuns + 1
+  end
+
+  -- Threshold 2: 3+ distinct runs each with at least 1 vote
+  if distinctRuns >= 3 then
+    self:_activateNinja(key)
+    return true
+  end
+
+  return false
+end
+
+-- Move all pending ninja votes for a target into the live DB.
+function Data:_activateNinja(key)
+  local pending = MVPDB.ninjaPending and MVPDB.ninjaPending[key]
+  if not pending then return end
+
+  MVP.Util.DebugPrint("Activating Ninja Looter for " .. key)
+
+  for runId, voters in pairs(pending) do
+    for rater, rec in pairs(voters) do
+      -- Ensure reason is set and mark as activated so ApplyVouch gate is bypassed
+      rec.reason = "NINJA_LOOTER"
+      rec._ninjaActivated = true
+      self:ApplyVouch(rec, rec.isLocal)
+    end
+  end
+
+  -- Clear pending for this target
+  MVPDB.ninjaPending[key] = nil
+
+  self:_rebuildAgg()
+  self:_notifyChanged()
+
+  print("|cff33ff99MVP|r |cffff6666*** Ninja Looter ***|r confirmed for |cffffffff" .. key .. "|r")
+end
+
+-- How many pending ninja runs does a target have? (for display)
+function Data:GetNinjaPendingCount(target)
+  local key = self:_ninjaKey(target)
+  local pending = MVPDB.ninjaPending and MVPDB.ninjaPending[key]
+  if not pending then return 0 end
+  local count = 0
+  for _ in pairs(pending) do count = count + 1 end
+  return count
+end
+
 function Data:ApplyVouch(rec, isLocal)
   ensureTables()
   if not rec or not rec.id then return false end
 
-  -- ANTI-FRAUD: Reject self-vouches (people can't vouch for themselves)
-  local raterNorm = MVP.Util.NormalizePlayerKey(rec.rater)
+  -- ANTI-FRAUD: Reject self-vouches
+  local raterNorm  = MVP.Util.NormalizePlayerKey(rec.rater)
   local targetNorm = MVP.Util.NormalizePlayerKey(rec.target)
   if raterNorm and targetNorm and raterNorm == targetNorm then
     MVP.Util.DebugPrint("Rejected self-vouch from", rec.rater)
     return false
+  end
+
+  -- NINJA LOOTER: route through pending system unless already activated
+  -- (rec._ninjaActivated is set internally by _activateNinja to bypass this gate)
+  if rec.reason == "NINJA_LOOTER" and not rec._ninjaActivated then
+    rec.isLocal = isLocal
+    rec.sources = rec.sources or {}
+    self:_storeNinjaPending(rec)
+    return false  -- not in live DB yet
   end
 
   local existing = MVPDB.vouches[rec.id]
@@ -490,9 +591,6 @@ function Data:ImportVouch(parts, sender)
   -- Basic validation
   if not rec.id or rec.id == "" then return false end
   if not rec.target or rec.target == "" then return false end
-  if rec.sign < 0 and (not rec.reason or rec.reason == "") then
-    return false
-  end
   if rec.role ~= "TANK" and rec.role ~= "HEALER" and rec.role ~= "DPS" then
     return false
   end
@@ -560,7 +658,7 @@ function Data:TopReason(map)
 end
 
 function MVP.Data:Wipe()
-  MVPDB = { vouches = {}, players = {}, meta = { lastTs = 0, submissions = {} } }
+  MVPDB = { vouches = {}, players = {}, ninjaPending = {}, meta = { lastTs = 0, submissions = {} } }
   ensureTables()
   self:_rebuildAgg()
   self:_notifyChanged()

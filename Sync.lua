@@ -79,11 +79,14 @@ Sync._needsLoginSync = false
 Sync._loginSyncSent = false
 
 -- Sync tracking
-Sync._syncInProgress = false
-Sync._syncVouchesReceived = 0
-Sync._syncLastReceiveTime = 0
-Sync._syncCompleteTimer = nil
-Sync.SYNC_COMPLETE_DELAY = 10
+Sync._syncInProgress        = false
+Sync._syncVouchesReceived   = 0
+Sync._syncVouchesSent       = 0
+Sync._syncLastReceiveTime   = 0
+Sync._syncCompleteTimer     = nil
+Sync._syncSendersReceived   = {}   -- [playerKey] = count received from them
+Sync._syncPlayersResponded  = 0
+Sync.SYNC_COMPLETE_DELAY    = 10
 
 -- Dedup
 Sync._recentMessages = {}
@@ -304,22 +307,7 @@ function Sync:ShowSyncPopup()
   syncBtn:SetPoint("BOTTOM", f, "BOTTOM", 0, 12)
   syncBtn:SetText("Sync Now")
   syncBtn:SetScript("OnClick", function()
-    Sync._syncInProgress = true
-    Sync._syncVouchesReceived = 0
-    Sync._syncLastReceiveTime = GetTime()
-
-    local sinceTs = (MVPDB and MVPDB.meta and MVPDB.meta.lastTs) or 0
-    local msg = "REQALL|" .. tostring(sinceTs)
-
-    -- Send via GUILD/PARTY/RAID immediately (no hardware event needed)
-    Sync:BroadcastAddonMessages(msg)
-
-    -- Also queue for channel (needs hardware event - button click counts)
-    Sync:QueueMessage(msg)
-    Sync:FlushChannelQueue()
-
-    Sync:StartSyncCompleteTimer()
-    print("|cff33ff99MVP|r Sync requested.")
+    Sync:RequestSync(true)  -- hardware event = true (button click)
     f:Hide()
   end)
 
@@ -331,10 +319,21 @@ function Sync:ShowSyncPopup()
   f:Show()
 end
 
-function Sync:OnVouchReceived()
+function Sync:OnVouchReceived(sender)
   if not self._syncInProgress then return end
   self._syncVouchesReceived = self._syncVouchesReceived + 1
   self._syncLastReceiveTime = GetTime()
+
+  -- Track unique senders
+  if sender then
+    local key = MVP.Util.NormalizePlayerKey(sender) or sender
+    if not self._syncSendersReceived[key] then
+      self._syncSendersReceived[key] = 0
+      self._syncPlayersResponded = self._syncPlayersResponded + 1
+    end
+    self._syncSendersReceived[key] = self._syncSendersReceived[key] + 1
+  end
+
   self:StartSyncCompleteTimer()
 end
 
@@ -350,17 +349,29 @@ end
 function Sync:OnSyncComplete()
   if not self._syncInProgress then return end
   self._syncInProgress = false
-  local received = self._syncVouchesReceived or 0
 
   if self._syncCompleteTimer then
     self._syncCompleteTimer:Cancel()
     self._syncCompleteTimer = nil
   end
 
+  local received  = self._syncVouchesReceived or 0
+  local sent      = self._syncVouchesSent     or 0
+  local fromCount = self._syncPlayersResponded or 0
+
+  print("|cff33ff99MVP|r Sync complete.")
+
   if received > 0 then
-    print("|cff33ff99MVP|r Sync complete. " .. received .. " vouches received.")
+    print(string.format("  |cff66ff66Received:|r %d vouche%s from %d player%s",
+      received, received == 1 and "" or "s",
+      fromCount, fromCount == 1 and "" or "s"))
   else
-    print("|cff33ff99MVP|r Sync complete. Database is up to date.")
+    print("  |cff66ff66Received:|r 0 vouches — database is up to date.")
+  end
+
+  if sent > 0 then
+    print(string.format("  |cffaaaaaa  Sent:|r %d vouch%s to other players",
+      sent, sent == 1 and "" or "es"))
   end
 
   if MVP.UI_DB and MVP.UI_DB.RefreshIfOpen then
@@ -380,7 +391,7 @@ function Sync:ProcessSyncMessage(msg, sender)
 
     local isNew = MVP.Data:ImportVouch(parts, sender)
     if isNew then
-      self:OnVouchReceived()
+      self:OnVouchReceived(sender)
       MVP.Util.DebugPrint("Imported vouch for", parts[5], "from", sender)
     end
 
@@ -413,17 +424,17 @@ end
 -- Shared sync trigger used by both the DB Sync button and /mvp sync command.
 -- hardwareEvent = true when called from a real button click (allows channel flush).
 function Sync:RequestSync(hardwareEvent)
-  self._syncInProgress = true
-  self._syncVouchesReceived = 0
-  self._syncLastReceiveTime = GetTime()
+  self._syncInProgress       = true
+  self._syncVouchesReceived  = 0
+  self._syncVouchesSent      = 0
+  self._syncLastReceiveTime  = GetTime()
+  self._syncPlayersResponded = 0
+  wipe(self._syncSendersReceived)
 
   local sinceTs = (MVPDB and MVPDB.meta and MVPDB.meta.lastTs) or 0
   local msg = "REQALL|" .. tostring(sinceTs)
 
-  -- Broadcast to guild/party/raid (no hardware event needed)
   self:BroadcastAddonMessages(msg)
-
-  -- Queue for addon channel; only flush immediately if we have a hardware event
   self:QueueMessage(msg)
   if hardwareEvent and self.FlushAllChannelMessages then
     self:FlushAllChannelMessages()
@@ -459,6 +470,7 @@ function Sync:HandleReqAll(sender, sinceTs)
 
     local maxToSend = math.min(#ids, 100)
     MVP.Util.DebugPrint("Responding to REQALL from", sender, "with", maxToSend, "vouches via WHISPER")
+    Sync._syncVouchesSent = (Sync._syncVouchesSent or 0) + maxToSend
 
     -- Send via WHISPER directly to requester - no hardware event needed!
     for i = 1, maxToSend do
