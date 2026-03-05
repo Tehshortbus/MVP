@@ -30,7 +30,12 @@ HOW IT WORKS
 Vouches will decay over time, the only negative comment that is
 considerably serious and never fully decays is the "Ninja Looter"
 negative comment. Reputation decays 1% per day (floor 0%), 
-except Ninja Looter which floors at 10% permanently.
+except Ninja Looter which floors at 10% permanently. 
+
+As a secondary note, because I view the "Ninja Looter" tag as
+an incredibly serious tag, I made the addon require the validation
+of one of two different scenarios to occur for this label to be 
+attached to a player, so if you see them with it, it was earned.
 
 ------------------------------------------------------------
 REPUTATION TIERS
